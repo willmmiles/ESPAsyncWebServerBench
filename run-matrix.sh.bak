@@ -1,0 +1,22 @@
+#!/bin/bash
+# Measure every AsyncTCP branch once per round, cycling between them.
+#
+# Interleaving matters: this network drifts, and measuring one branch three times
+# in a row lets that drift look like a property of the branch.  One round of all
+# three, repeated, spreads any drift evenly across them.
+#
+#   ./run-matrix.sh arduino-3 3        # 3 rounds of all branches
+set -euo pipefail
+ENV=${1:?usage: run-matrix.sh <pio-env> [rounds]}
+ROUNDS=${2:-3}
+BRANCHES=(main yet-more-safety refcounted-impl)
+PY=~/.platformio/penv/bin/python
+cd /home/wmiles/Projects/ESPAsyncWebServer
+for r in $(seq 1 "$ROUNDS"); do
+  for b in "${BRANCHES[@]}"; do
+    echo "--- round $r: $b on $ENV ---"
+    $PY /home/wmiles/Projects/bench/collect.py \
+        --env "$ENV" --branch "$b" --round "$r" \
+        --repeats 2 --duration 10 --sse-duration 15 --no-autocannon
+  done
+done

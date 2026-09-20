@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+"""Aggregate collected runs.  Medians throughout: a dropped packet costs its
+connection about a second, and those stalls move a mean around far more than any
+real change in the code."""
+import json, statistics, sys
+from collections import defaultdict
+
+path = sys.argv[1] if len(sys.argv) > 1 else "/home/wmiles/Projects/bench/results.jsonl"
+runs = [json.loads(l) for l in open(path)]
+
+agg = defaultdict(lambda: {"rps": [], "p50": [], "p95": [], "stalls": [], "sse": [], "n": 0})
+for d in runs:
+    k = (d["env"], d["branch"])
+    a = agg[k]
+    for h in d["http"]:
+        a["rps"].append(h["rps"])
+        a["p50"].append(h["latency_p50_ms"])
+        a["p95"].append(h["latency_p95_ms"])
+        if h.get("stall_pct") is not None:
+            a["stalls"].append(h["stall_pct"])
+        a["n"] += 1
+    if d.get("sse"):
+        a["sse"].append(d["sse"]["events_per_sec"])
+
+order = ["main", "yet-more-safety", "refcounted-impl"]
+med = lambda v: statistics.median(v) if v else float("nan")
+
+for env in ("arduino-3", "arduino-2"):
+    print(f"\n{env}")
+    print(f"  {'branch':<18}{'runs':>5}{'rps':>9}{'lat p50':>10}{'lat p95':>10}{'stall%':>9}{'SSE/s':>9}")
+    base = None
+    for b in order:
+        a = agg.get((env, b))
+        if not a:
+            continue
+        rps, p50 = med(a["rps"]), med(a["p50"])
+        if b == "main":
+            base = (rps, p50)
+        d = ""
+        if base and b != "main":
+            d = f"   ({(rps / base[0] - 1) * 100:+.1f}% rps, {(p50 / base[1] - 1) * 100:+.1f}% lat)"
+        print(f"  {b:<18}{a['n']:>5}{rps:>9.1f}{p50:>10.1f}{med(a['p95']):>10.1f}"
+              f"{med(a['stalls']) if a['stalls'] else float('nan'):>9.2f}{med(a['sse']):>9.1f}{d}")
+
+print("\nspread within each configuration (min-max of per-run medians):")
+for env in ("arduino-3", "arduino-2"):
+    for b in order:
+        a = agg.get((env, b))
+        if a and a["p50"]:
+            print(f"  {env:<11}{b:<18} p50 {min(a['p50']):.0f}-{max(a['p50']):.0f} ms   "
+                  f"rps {min(a['rps']):.0f}-{max(a['rps']):.0f}")
+
+# Paired within-round comparison.  Rounds are interleaved specifically so that
+# drift hits every branch equally; comparing each branch to main *within* a round
+# removes it, which pooled medians cannot.
+print("\npaired against main, within each round (negative = better than main):")
+byround = defaultdict(dict)
+for d in runs:
+    if not d["http"]:
+        continue
+    p50 = statistics.median([h["latency_p50_ms"] for h in d["http"]])
+    rps = statistics.median([h["rps"] for h in d["http"]])
+    byround[(d["env"], d.get("round", 0))][d["branch"]] = (rps, p50)
+
+for env in ("arduino-3", "arduino-2"):
+    for b in ("yet-more-safety", "refcounted-impl"):
+        drps, dlat = [], []
+        for (e, r), v in sorted(byround.items()):
+            if e == env and "main" in v and b in v:
+                drps.append((v[b][0] / v["main"][0] - 1) * 100)
+                dlat.append((v[b][1] / v["main"][1] - 1) * 100)
+        if drps:
+            sign = all(x > 0 for x in dlat) or all(x < 0 for x in dlat)
+            print(f"  {env:<11}{b:<18} n={len(drps)}  rps {statistics.median(drps):+6.1f}%  "
+                  f"lat {statistics.median(dlat):+6.1f}%   per-round lat: "
+                  f"{', '.join(f'{x:+.0f}%' for x in dlat)}"
+                  f"{'  [consistent]' if sign else '  [mixed sign]'}")
