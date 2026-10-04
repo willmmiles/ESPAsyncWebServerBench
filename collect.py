@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
 """Collect ESPAsyncWebServer performance numbers for one AsyncTCP branch.
 
-Builds and uploads examples/arduino/PerfTests, waits for the board to associate,
-then runs the benchmarks the example documents and writes one JSON record per
-configuration.
+Builds and uploads src/PerfTests.cpp, waits for the board to associate, then runs
+the benchmarks and writes one JSON record per configuration.
 
 Run it with the PlatformIO venv python, which has pyserial:
 
-    ~/.platformio/penv/bin/python /home/wmiles/Projects/bench/collect.py \
-        --env arduino-3 --branch refcounted-impl
+    ~/.platformio/penv/bin/python collect.py --branch refcounted-impl
 
-The AsyncTCP working tree must be clean, because switching branches is how the
-library under test is selected.  Use --skip-upload --ip A.B.C.D to re-measure a
-board that is already running.
+--branch and --webserver take any git ref.  Each is resolved to a commit and built
+from git, so only committed work is measured and neither working tree is touched.
+Use --skip-upload --ip A.B.C.D to re-measure a board that is already running.
 """
 
 import argparse
+import hashlib
 import json
 import statistics
 import importlib.util
@@ -27,13 +26,12 @@ import sys
 import time
 from datetime import datetime, timezone
 
-# Point at a detached worktree to benchmark without disturbing the main checkout.
-ASYNCTCP = os.environ.get("BENCH_ASYNCTCP_DIR", "/home/wmiles/Projects/AsyncTCP")
-WEBSERVER = "/home/wmiles/Projects/ESPAsyncWebServer"
+HERE = os.path.dirname(os.path.abspath(__file__))
+ASYNCTCP = os.environ.get("BENCH_ASYNCTCP_DIR", os.path.join(HERE, "../AsyncTCP"))
+WEBSERVER = os.environ.get("BENCH_WEBSERVER_DIR", os.path.join(HERE, "../ESPAsyncWebServer"))
 PIO = os.path.expanduser("~/.platformio/penv/bin/pio")
-CREDS_DIR = "."
 
-_spec = importlib.util.spec_from_file_location("load", os.path.join(CREDS_DIR, "load.py"))
+_spec = importlib.util.spec_from_file_location("load", os.path.join(HERE, "load.py"))
 load = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(load)
 
@@ -46,28 +44,34 @@ def git(repo, *args):
     return run(["git", "-C", repo, *args])
 
 
-def select_branch(branch):
-    dirty = git(ASYNCTCP, "status", "--porcelain").stdout.strip()
-    if dirty:
-        sys.exit(f"AsyncTCP working tree is dirty; stash before benchmarking:\n{dirty}")
-    # --detach so this works in a worktree even when the branch is checked out elsewhere
-    r = git(ASYNCTCP, "checkout", "--detach", branch)
+def resolve(repo, ref):
+    r = git(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
     if r.returncode:
-        sys.exit(f"could not check out {branch}:\n{r.stderr}")
-    sha = git(ASYNCTCP, "rev-parse", "--short", "HEAD").stdout.strip()
-    print(f"  AsyncTCP @ {branch} ({sha})")
+        sys.exit(f"{ref} is not a commit in {repo}")
+    sha = r.stdout.strip()
+    print(f"  {os.path.basename(os.path.normpath(repo))} @ {ref} ({sha[:7]})")
     return sha
 
 
-def upload(env, port):
+def upload(env, port, asynctcp_sha, webserver_sha):
     extra = os.environ.get("BENCH_EXTRA_FLAGS", "")
-    env_vars = dict(os.environ, PLATFORMIO_BUILD_FLAGS=f"-I{CREDS_DIR} {extra}".strip())
-    # A fresh build dir sometimes races the .ino->.cpp generation, and it can miss
-    # twice in a row; retry a few times before giving up.
+    # One workspace per build, so a later round rebuilds nothing and pio never has to
+    # notice that a library spec changed under an existing libdeps folder.
+    key = f"{env}-{asynctcp_sha[:12]}-{webserver_sha[:12]}"
+    if extra:
+        key += "-" + hashlib.sha1(extra.encode()).hexdigest()[:8]
+    env_vars = dict(
+        os.environ,
+        BENCH_ASYNCTCP=f"AsyncTCP=git+file://{os.path.realpath(ASYNCTCP)}#{asynctcp_sha}",
+        BENCH_WEBSERVER=f"ESPAsyncWebServer=git+file://{os.path.realpath(WEBSERVER)}#{webserver_sha}",
+        PLATFORMIO_WORKSPACE_DIR=os.path.join(HERE, ".pio", "bench", key),
+        PLATFORMIO_BUILD_FLAGS=extra,
+    )
+    # Retry before giving up, so one failed bootloader sync does not end a long matrix.
     for attempt in (1, 2, 3, 4):
         r = subprocess.run(
             [PIO, "run", "-e", env, "-t", "upload", "--upload-port", port],
-            cwd=WEBSERVER, capture_output=True, text=True, env=env_vars,
+            cwd=HERE, capture_output=True, text=True, env=env_vars,
         )
         if r.returncode == 0:
             return
@@ -356,8 +360,9 @@ def sse_bench(ip, workers, duration):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--env", required=True, help="platformio env, e.g. arduino-3")
-    ap.add_argument("--branch", required=True, help="AsyncTCP branch to test")
+    ap.add_argument("--env", default="arduino-3", help="platformio env")
+    ap.add_argument("--branch", required=True, help="AsyncTCP ref to test")
+    ap.add_argument("--webserver", default="HEAD", help="ESPAsyncWebServer ref to test")
     ap.add_argument("--port", default="/dev/ttyUSB0")
     ap.add_argument("--ip", help="skip build/upload and measure this address")
     ap.add_argument("--skip-upload", action="store_true")
@@ -374,13 +379,14 @@ def main():
     args = ap.parse_args()
 
     print(f"== {args.branch} on {args.env} ==")
-    sha = None
+    sha = webserver_sha = None
     info = {}
     if args.ip and args.skip_upload:
         ip = args.ip
     else:
-        sha = select_branch(args.branch)
-        upload(args.env, args.port)
+        sha = resolve(ASYNCTCP, args.branch)
+        webserver_sha = resolve(WEBSERVER, args.webserver)
+        upload(args.env, args.port, sha, webserver_sha)
         info = wait_for_board(args.port)
         ip = info["ip"]
     print(f"  board at {ip} rssi={info.get('rssi')} bssid={info.get('bssid')}")
@@ -396,7 +402,9 @@ def main():
         "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "branch": args.branch,
         "build_flags": os.environ.get("BENCH_EXTRA_FLAGS", ""),
-        "sha": sha,
+        "sha": sha and sha[:7],
+        "webserver": args.webserver,
+        "webserver_sha": webserver_sha and webserver_sha[:7],
         "env": args.env,
         "round": args.round,
         "ip": ip,
