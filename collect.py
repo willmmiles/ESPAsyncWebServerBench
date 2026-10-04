@@ -398,6 +398,10 @@ def main():
     ap.add_argument("--sse-duration", type=int, default=20)
     ap.add_argument("--no-autocannon", action="store_true",
                     help="skip the reference run; its error counts are not comparable")
+    ap.add_argument("--no-http", action="store_true",
+                    help="skip the http collection")
+    ap.add_argument("--no-sse", action="store_true",
+                    help="skip the sse collection")
     ap.add_argument("--round", type=int, default=0,
                     help="round number, for interleaved runs")
     ap.add_argument("--out", default="/home/wmiles/Projects/bench/results.jsonl")
@@ -463,23 +467,24 @@ def main():
         }
         print(f"  idle: {record['idle']['loops_per_sec']:.0f} loops/sec")
 
-    before = read_stats(ip, reset=True)
-    for i in range(args.repeats):
-        r = load.run(ip, 80, "/", args.connections, args.duration)
-        record["http"].append(r)
-        print(f"  http run {i + 1}: {r['rps']} rps, {r['latency_avg_ms']} ms avg, "
-              f"p95 {r['latency_p95_ms']} ms, {r['failure_total']} failures")
-        time.sleep(2)
-    after = read_stats(ip)
-    if after:
-        record["http_device"] = {
-            "loops_per_sec": round(1000.0 * after["loops"] / max(after["window_ms"], 1), 1),
-            "requests": after.get("requests"),
-            "free_heap": after.get("free_heap"),
-            "min_free_heap": after.get("min_free_heap"),
-            "task_cpu": task_cpu(before, after),
-        }
-        print(f"  http device: {record['http_device']['loops_per_sec']:.0f} loops/sec")
+    if not args.no_http:
+        before = read_stats(ip, reset=True)
+        for i in range(args.repeats):
+            r = load.run(ip, 80, "/", args.connections, args.duration)
+            record["http"].append(r)
+            print(f"  http run {i + 1}: {r['rps']} rps, {r['latency_avg_ms']} ms avg, "
+                  f"p95 {r['latency_p95_ms']} ms, {r['failure_total']} failures")
+            time.sleep(2)
+        after = read_stats(ip)
+        if after:
+            record["http_device"] = {
+                "loops_per_sec": round(1000.0 * after["loops"] / max(after["window_ms"], 1), 1),
+                "requests": after.get("requests"),
+                "free_heap": after.get("free_heap"),
+                "min_free_heap": after.get("min_free_heap"),
+                "task_cpu": task_cpu(before, after),
+            }
+            print(f"  http device: {record['http_device']['loops_per_sec']:.0f} loops/sec")
 
     if not args.no_autocannon:
         record["autocannon"] = autocannon_bench(ip, args.connections, args.duration)
@@ -487,32 +492,33 @@ def main():
         a = record["autocannon"]
         print(f"  autocannon (reference): {a['rps_avg']:.1f} rps, {a['errors']} errors")
 
-    before = read_stats(ip, reset=True)
-    record["sse"] = sse_bench(ip, args.sse_workers, args.sse_duration)
-    after = read_stats(ip)
-    if after:
-        record["sse_device"] = {
-            "loops_per_sec": round(1000.0 * after["loops"] / max(after["window_ms"], 1), 1),
-            "generated_per_sec": round(1000.0 * after["sse_generated"] / max(after["window_ms"], 1), 1),
-            "free_heap": after.get("free_heap"),
-            "task_cpu": task_cpu(before, after),
-        }
-    sse = record["sse"]
-    print(f"  sse: {sse['events_per_sec']} events/sec delivered "
-          f"across {args.sse_workers} workers")
-    if "generated_per_sec" in sse:
-        print(f"       generated {sse['generated_per_sec']}/sec on the board, "
-              f"median per-client drop {sse.get('drop_pct_median')}%")
-    if sse.get("gen_interval_ms"):
-        g = sse["gen_interval_ms"]
-        print(f"       send interval p50 {g['p50']} ms, p95 {g['p95']} ms, max {g['max']} ms "
-              f"({g['over_20ms']}/{g['n']} over 20 ms)")
-    if record["sse_device"]:
-        d = record["sse_device"]
-        print(f"       device: {d['loops_per_sec']:.0f} loops/sec")
-        if d["task_cpu"]:
-            top = list(d["task_cpu"]["pct"].items())[:5]
-            print("       cpu: " + ", ".join(f"{k} {v}%" for k, v in top))
+    if not args.no_sse:
+        before = read_stats(ip, reset=True)
+        record["sse"] = sse_bench(ip, args.sse_workers, args.sse_duration)
+        after = read_stats(ip)
+        if after:
+            record["sse_device"] = {
+                "loops_per_sec": round(1000.0 * after["loops"] / max(after["window_ms"], 1), 1),
+                "generated_per_sec": round(1000.0 * after["sse_generated"] / max(after["window_ms"], 1), 1),
+                "free_heap": after.get("free_heap"),
+                "task_cpu": task_cpu(before, after),
+            }
+        sse = record["sse"]
+        print(f"  sse: {sse['events_per_sec']} events/sec delivered "
+              f"across {args.sse_workers} workers")
+        if "generated_per_sec" in sse:
+            print(f"       generated {sse['generated_per_sec']}/sec on the board, "
+                  f"median per-client drop {sse.get('drop_pct_median')}%")
+        if sse.get("gen_interval_ms"):
+            g = sse["gen_interval_ms"]
+            print(f"       send interval p50 {g['p50']} ms, p95 {g['p95']} ms, max {g['max']} ms "
+                  f"({g['over_20ms']}/{g['n']} over 20 ms)")
+        if record["sse_device"]:
+            d = record["sse_device"]
+            print(f"       device: {d['loops_per_sec']:.0f} loops/sec")
+            if d["task_cpu"]:
+                top = list(d["task_cpu"]["pct"].items())[:5]
+                print("       cpu: " + ", ".join(f"{k} {v}%" for k, v in top))
 
     with open(args.out, "a") as f:
         f.write(json.dumps(record) + "\n")
