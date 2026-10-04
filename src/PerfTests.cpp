@@ -88,11 +88,11 @@ static size_t charactersIndex = 0;
 #include "bench_credentials.h"
 #endif
 
-#ifndef WIFI_SSID
-#define WIFI_SSID "esp-captive"
-#endif
 #ifndef WIFI_PASS
 #define WIFI_PASS ""
+#endif
+#ifndef BENCH_AP_SSID
+#define BENCH_AP_SSID "esp-captive"
 #endif
 
 static AsyncWebServer server(80);
@@ -152,7 +152,13 @@ static String bench_task_stats() {
 void setup() {
   Serial.begin(115200);
 
-#if ASYNCWEBSERVER_WIFI_SUPPORTED
+#if ASYNCWEBSERVER_WIFI_SUPPORTED && (defined(BENCH_SOFTAP) || !defined(WIFI_SSID))
+  // The example's soft-AP, chosen with -D BENCH_SOFTAP or by having no credentials.
+  // The client must join BENCH_AP_SSID, but then no infrastructure AP sits in between.
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(BENCH_AP_SSID);
+  Serial.printf("BENCH mode=ap ssid=%s ip=%s\n", BENCH_AP_SSID, WiFi.softAPIP().toString().c_str());
+#elif ASYNCWEBSERVER_WIFI_SUPPORTED
   // Station mode rather than the example's soft-AP, so the benchmark client is a real
   // host on the LAN.  This network has several APs on the same SSID and associating
   // with a distant one skews response times badly, so pin WIFI_BSSID, or failing that
