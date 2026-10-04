@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Aggregate collected runs.  Medians throughout: a dropped packet costs its
 connection about a second, and those stalls move a mean around far more than any
-real change in the code."""
-import json, statistics, sys
+real change in the code.
+
+    python3 summarize.py results/<run>.jsonl ...    # or records on stdin
+"""
+import fileinput, json, statistics
 from collections import defaultdict
 
-path = sys.argv[1] if len(sys.argv) > 1 else "results.jsonl"
-runs = [json.loads(l) for l in open(path)]
+runs = [json.loads(l) for l in fileinput.input() if l.strip()]
 
 agg = defaultdict(lambda: {"rps": [], "p50": [], "p95": [], "stalls": [], "sse": [], "n": 0})
 for d in runs:

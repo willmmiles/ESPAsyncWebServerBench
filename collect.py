@@ -13,6 +13,8 @@ from git, so only committed work is measured and neither working tree is touched
 --commit and --webserver-commit pin those commits instead, and --build-only and
 --no-build split building from measuring, so a matrix builds each target once.
 Use --skip-upload --ip A.B.C.D to re-measure a board that is already running.
+
+The JSON record goes to stdout, or is appended to --out; progress goes to stderr.
 """
 
 import argparse
@@ -39,6 +41,10 @@ load = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(load)
 
 
+def log(*args):
+    print(*args, file=sys.stderr, flush=True)
+
+
 def run(cmd, **kw):
     return subprocess.run(cmd, shell=isinstance(cmd, str), capture_output=True, text=True, **kw)
 
@@ -52,7 +58,7 @@ def resolve(repo, ref):
     if r.returncode:
         sys.exit(f"{ref} is not a commit in {repo}")
     sha = r.stdout.strip()
-    print(f"  {os.path.basename(os.path.normpath(repo))} @ {ref} ({sha[:7]})")
+    log(f"  {os.path.basename(os.path.normpath(repo))} @ {ref} ({sha[:7]})")
     return sha
 
 
@@ -96,7 +102,7 @@ def upload(env, port, env_vars):
         )
         if r.returncode == 0:
             return
-        print(f"  upload attempt {attempt} failed")
+        log(f"  upload attempt {attempt} failed")
     sys.exit(r.stdout[-3000:] + r.stderr[-2000:])
 
 
@@ -137,7 +143,7 @@ def autocannon_bench(ip, connections, duration):
     try:
         d = json.loads(r.stdout)
     except json.JSONDecodeError:
-        print("  autocannon produced no JSON:", r.stdout[-300:], r.stderr[-300:])
+        log("  autocannon produced no JSON:", r.stdout[-300:], r.stderr[-300:])
         return None
     return {
         "rps_avg": d["requests"]["average"],
@@ -404,10 +410,10 @@ def main():
                     help="skip the sse collection")
     ap.add_argument("--round", type=int, default=0,
                     help="round number, for interleaved runs")
-    ap.add_argument("--out", default="/home/wmiles/Projects/bench/results.jsonl")
+    ap.add_argument("--out", help="append the record to this file instead of printing it")
     args = ap.parse_args()
 
-    print(f"== {args.branch} on {args.env} ==")
+    log(f"== {args.branch} on {args.env} ==")
     sha = webserver_sha = None
     info = {}
     if args.ip and args.skip_upload:
@@ -423,7 +429,7 @@ def main():
         upload(args.env, args.port, env_vars)
         info = wait_for_board(args.port)
         ip = info["ip"]
-    print(f"  board at {ip} rssi={info.get('rssi')} bssid={info.get('bssid')}")
+    log(f"  board at {ip} rssi={info.get('rssi')} bssid={info.get('bssid')}")
 
     # Let the stack settle, and prove it answers before timing anything
     time.sleep(3)
@@ -465,15 +471,15 @@ def main():
             "sse_generated_per_sec": round(1000.0 * idle["sse_generated"] / max(idle["window_ms"], 1), 1),
             "free_heap": idle.get("free_heap"),
         }
-        print(f"  idle: {record['idle']['loops_per_sec']:.0f} loops/sec")
+        log(f"  idle: {record['idle']['loops_per_sec']:.0f} loops/sec")
 
     if not args.no_http:
         before = read_stats(ip, reset=True)
         for i in range(args.repeats):
             r = load.run(ip, 80, "/", args.connections, args.duration)
             record["http"].append(r)
-            print(f"  http run {i + 1}: {r['rps']} rps, {r['latency_avg_ms']} ms avg, "
-                  f"p95 {r['latency_p95_ms']} ms, {r['failure_total']} failures")
+            log(f"  http run {i + 1}: {r['rps']} rps, {r['latency_avg_ms']} ms avg, "
+                f"p95 {r['latency_p95_ms']} ms, {r['failure_total']} failures")
             time.sleep(2)
         after = read_stats(ip)
         if after:
@@ -484,13 +490,13 @@ def main():
                 "min_free_heap": after.get("min_free_heap"),
                 "task_cpu": task_cpu(before, after),
             }
-            print(f"  http device: {record['http_device']['loops_per_sec']:.0f} loops/sec")
+            log(f"  http device: {record['http_device']['loops_per_sec']:.0f} loops/sec")
 
     if not args.no_autocannon:
         record["autocannon"] = autocannon_bench(ip, args.connections, args.duration)
     if record["autocannon"]:
         a = record["autocannon"]
-        print(f"  autocannon (reference): {a['rps_avg']:.1f} rps, {a['errors']} errors")
+        log(f"  autocannon (reference): {a['rps_avg']:.1f} rps, {a['errors']} errors")
 
     if not args.no_sse:
         before = read_stats(ip, reset=True)
@@ -504,25 +510,28 @@ def main():
                 "task_cpu": task_cpu(before, after),
             }
         sse = record["sse"]
-        print(f"  sse: {sse['events_per_sec']} events/sec delivered "
-              f"across {args.sse_workers} workers")
+        log(f"  sse: {sse['events_per_sec']} events/sec delivered "
+            f"across {args.sse_workers} workers")
         if "generated_per_sec" in sse:
-            print(f"       generated {sse['generated_per_sec']}/sec on the board, "
-                  f"median per-client drop {sse.get('drop_pct_median')}%")
+            log(f"       generated {sse['generated_per_sec']}/sec on the board, "
+                f"median per-client drop {sse.get('drop_pct_median')}%")
         if sse.get("gen_interval_ms"):
             g = sse["gen_interval_ms"]
-            print(f"       send interval p50 {g['p50']} ms, p95 {g['p95']} ms, max {g['max']} ms "
-                  f"({g['over_20ms']}/{g['n']} over 20 ms)")
+            log(f"       send interval p50 {g['p50']} ms, p95 {g['p95']} ms, max {g['max']} ms "
+                f"({g['over_20ms']}/{g['n']} over 20 ms)")
         if record["sse_device"]:
             d = record["sse_device"]
-            print(f"       device: {d['loops_per_sec']:.0f} loops/sec")
+            log(f"       device: {d['loops_per_sec']:.0f} loops/sec")
             if d["task_cpu"]:
                 top = list(d["task_cpu"]["pct"].items())[:5]
-                print("       cpu: " + ", ".join(f"{k} {v}%" for k, v in top))
+                log("       cpu: " + ", ".join(f"{k} {v}%" for k, v in top))
 
-    with open(args.out, "a") as f:
-        f.write(json.dumps(record) + "\n")
-    print(f"  appended to {args.out}")
+    if args.out:
+        with open(args.out, "a") as f:
+            f.write(json.dumps(record) + "\n")
+        log(f"  appended to {args.out}")
+    else:
+        print(json.dumps(record))
 
 
 if __name__ == "__main__":
