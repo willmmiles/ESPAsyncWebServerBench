@@ -405,7 +405,7 @@ def main():
     ap.add_argument("--no-autocannon", action="store_true",
                     help="skip the reference run; its error counts are not comparable")
     ap.add_argument("--no-http", action="store_true",
-                    help="skip the http collection")
+                    help="skip the http collection, including autocannon")
     ap.add_argument("--no-sse", action="store_true",
                     help="skip the sse collection")
     ap.add_argument("--round", type=int, default=0,
@@ -492,7 +492,7 @@ def main():
             }
             log(f"  http device: {record['http_device']['loops_per_sec']:.0f} loops/sec")
 
-    if not args.no_autocannon:
+    if not args.no_autocannon and not args.no_http:
         record["autocannon"] = autocannon_bench(ip, args.connections, args.duration)
     if record["autocannon"]:
         a = record["autocannon"]
