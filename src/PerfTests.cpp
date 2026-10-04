@@ -155,11 +155,17 @@ void setup() {
 #if ASYNCWEBSERVER_WIFI_SUPPORTED
   // Station mode rather than the example's soft-AP, so the benchmark client is a real
   // host on the LAN.  This network has several APs on the same SSID and associating
-  // with a distant one skews response times badly, so scan and pin the strongest BSSID
-  // - and print which one, so runs can be compared honestly.
+  // with a distant one skews response times badly, so pin WIFI_BSSID, or failing that
+  // the strongest BSSID - and print which one, so runs can be compared honestly.
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);  // power save adds tens of ms of latency
 
+#ifdef WIFI_BSSID
+  uint8_t bssid[6];
+  sscanf(WIFI_BSSID, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx", &bssid[0], &bssid[1], &bssid[2], &bssid[3], &bssid[4], &bssid[5]);
+  Serial.printf("BENCH bssid=%s\n", WIFI_BSSID);
+  WiFi.begin(WIFI_SSID, WIFI_PASS, 0, bssid);
+#else
   int best = -1;
   int n = WiFi.scanNetworks();
   for (int i = 0; i < n; i++) {
@@ -177,11 +183,12 @@ void setup() {
     Serial.println("BENCH bssid=none");
     WiFi.begin(WIFI_SSID, WIFI_PASS);
   }
+#endif
 
   while (WiFi.status() != WL_CONNECTED) {
     delay(200);
   }
-  Serial.printf("BENCH ip=%s rssi=%d\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
+  Serial.printf("BENCH bssid=%s ip=%s rssi=%d\n", WiFi.BSSIDstr().c_str(), WiFi.localIP().toString().c_str(), WiFi.RSSI());
 #endif
 
   // Pauses in the request parsing phase
