@@ -5,7 +5,7 @@ real change in the code."""
 import json, statistics, sys
 from collections import defaultdict
 
-path = sys.argv[1] if len(sys.argv) > 1 else "/home/wmiles/Projects/bench/results.jsonl"
+path = sys.argv[1] if len(sys.argv) > 1 else "results.jsonl"
 runs = [json.loads(l) for l in open(path)]
 
 agg = defaultdict(lambda: {"rps": [], "p50": [], "p95": [], "stalls": [], "sse": [], "n": 0})
