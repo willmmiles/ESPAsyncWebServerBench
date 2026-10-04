@@ -10,6 +10,8 @@ Run it with the PlatformIO venv python, which has pyserial:
 
 --branch and --webserver take any git ref.  Each is resolved to a commit and built
 from git, so only committed work is measured and neither working tree is touched.
+--commit and --webserver-commit pin those commits instead, and --build-only and
+--no-build split building from measuring, so a matrix builds each target once.
 Use --skip-upload --ip A.B.C.D to re-measure a board that is already running.
 """
 
@@ -30,6 +32,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ASYNCTCP = os.environ.get("BENCH_ASYNCTCP_DIR", os.path.join(HERE, "../AsyncTCP"))
 WEBSERVER = os.environ.get("BENCH_WEBSERVER_DIR", os.path.join(HERE, "../ESPAsyncWebServer"))
 PIO = os.path.expanduser("~/.platformio/penv/bin/pio")
+ESPTOOL = os.path.expanduser("~/.platformio/penv/bin/esptool")
 
 _spec = importlib.util.spec_from_file_location("load", os.path.join(HERE, "load.py"))
 load = importlib.util.module_from_spec(_spec)
@@ -53,29 +56,47 @@ def resolve(repo, ref):
     return sha
 
 
-def upload(env, port, asynctcp_sha, webserver_sha):
+def pio_env(env, asynctcp_sha, webserver_sha):
     extra = os.environ.get("BENCH_EXTRA_FLAGS", "")
     # One workspace per build, so a later round rebuilds nothing and pio never has to
     # notice that a library spec changed under an existing libdeps folder.
     key = f"{env}-{asynctcp_sha[:12]}-{webserver_sha[:12]}"
     if extra:
         key += "-" + hashlib.sha1(extra.encode()).hexdigest()[:8]
-    env_vars = dict(
+    return dict(
         os.environ,
         BENCH_ASYNCTCP=f"AsyncTCP=git+file://{os.path.realpath(ASYNCTCP)}#{asynctcp_sha}",
         BENCH_WEBSERVER=f"ESPAsyncWebServer=git+file://{os.path.realpath(WEBSERVER)}#{webserver_sha}",
         PLATFORMIO_WORKSPACE_DIR=os.path.join(HERE, ".pio", "bench", key),
         PLATFORMIO_BUILD_FLAGS=extra,
     )
+
+
+def build(env, env_vars):
+    r = subprocess.run([PIO, "run", "-e", env], cwd=HERE, capture_output=True, text=True, env=env_vars)
+    if r.returncode:
+        sys.exit(r.stdout[-3000:] + r.stderr[-2000:])
+
+
+def upload(env, port, env_vars):
+    # The merged image carries bootloader, partitions and boot_app0, so flashing it
+    # needs nothing from the build or the shared framework package.  (pio's own
+    # `-t nobuild -t upload` drops those images from the esptool command.)
+    firmware = os.path.join(env_vars["PLATFORMIO_WORKSPACE_DIR"], "build", env, "firmware.factory.bin")
+    if not os.path.exists(firmware):
+        sys.exit(f"no firmware at {firmware}; build it first")
     # Retry before giving up, so one failed bootloader sync does not end a long matrix.
+    # Underscore spellings: penv's esptool resolves to whichever tool-esptoolpy last
+    # took the shared package slot, 4.x or 5.x, and only these work in both.
     for attempt in (1, 2, 3, 4):
         r = subprocess.run(
-            [PIO, "run", "-e", env, "-t", "upload", "--upload-port", port],
-            cwd=HERE, capture_output=True, text=True, env=env_vars,
+            [ESPTOOL, "--port", port, "--baud", "460800", "--before", "default_reset",
+             "--after", "hard_reset", "write_flash", "-z", "0x0", firmware],
+            capture_output=True, text=True,
         )
         if r.returncode == 0:
             return
-        print(f"  build/upload attempt {attempt} failed")
+        print(f"  upload attempt {attempt} failed")
     sys.exit(r.stdout[-3000:] + r.stderr[-2000:])
 
 
@@ -363,6 +384,10 @@ def main():
     ap.add_argument("--env", default="arduino-3", help="platformio env")
     ap.add_argument("--branch", required=True, help="AsyncTCP ref to test")
     ap.add_argument("--webserver", default="HEAD", help="ESPAsyncWebServer ref to test")
+    ap.add_argument("--commit", help="AsyncTCP commit to build, recorded under --branch")
+    ap.add_argument("--webserver-commit", help="ESPAsyncWebServer commit to build")
+    ap.add_argument("--build-only", action="store_true", help="build the firmware and exit")
+    ap.add_argument("--no-build", action="store_true", help="upload firmware built earlier")
     ap.add_argument("--port", default="/dev/ttyUSB0")
     ap.add_argument("--ip", help="skip build/upload and measure this address")
     ap.add_argument("--skip-upload", action="store_true")
@@ -384,9 +409,14 @@ def main():
     if args.ip and args.skip_upload:
         ip = args.ip
     else:
-        sha = resolve(ASYNCTCP, args.branch)
-        webserver_sha = resolve(WEBSERVER, args.webserver)
-        upload(args.env, args.port, sha, webserver_sha)
+        sha = resolve(ASYNCTCP, args.commit or args.branch)
+        webserver_sha = resolve(WEBSERVER, args.webserver_commit or args.webserver)
+        env_vars = pio_env(args.env, sha, webserver_sha)
+        if not args.no_build:
+            build(args.env, env_vars)
+        if args.build_only:
+            return
+        upload(args.env, args.port, env_vars)
         info = wait_for_board(args.port)
         ip = info["ip"]
     print(f"  board at {ip} rssi={info.get('rssi')} bssid={info.get('bssid')}")
