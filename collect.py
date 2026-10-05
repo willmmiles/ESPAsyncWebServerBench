@@ -6,7 +6,7 @@ the benchmarks and writes one JSON record per configuration.
 
 Run it with the PlatformIO venv python, which has pyserial:
 
-    ~/.platformio/penv/bin/python collect.py --branch refcounted-impl
+    ~/.platformio/penv/bin/python collect.py --branch main
 
 --branch and --webserver take any git ref.  Each is resolved to a commit and built
 from git, so only committed work is measured and neither working tree is touched.
