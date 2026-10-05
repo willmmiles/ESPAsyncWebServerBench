@@ -24,10 +24,12 @@ for d in runs:
     if d.get("sse"):
         a["sse"].append(d["sse"]["events_per_sec"])
 
-order = ["main", "yet-more-safety", "refcounted-impl", "core-changes"]
+# main is the baseline; everything else in the order it was first measured
+envs = list(dict.fromkeys(d["env"] for d in runs))
+order = sorted(dict.fromkeys(d["branch"] for d in runs), key=lambda b: b != "main")
 med = lambda v: statistics.median(v) if v else float("nan")
 
-for env in ("arduino-3", "arduino-2"):
+for env in envs:
     print(f"\n{env}")
     print(f"  {'branch':<18}{'runs':>5}{'rps':>9}{'lat p50':>10}{'lat p95':>10}{'stall%':>9}{'SSE/s':>9}")
     base = None
@@ -45,7 +47,7 @@ for env in ("arduino-3", "arduino-2"):
               f"{med(a['stalls']) if a['stalls'] else float('nan'):>9.2f}{med(a['sse']):>9.1f}{d}")
 
 print("\nspread within each configuration (min-max of per-run medians):")
-for env in ("arduino-3", "arduino-2"):
+for env in envs:
     for b in order:
         a = agg.get((env, b))
         if a and a["p50"]:
@@ -64,8 +66,8 @@ for d in runs:
     rps = statistics.median([h["rps"] for h in d["http"]])
     byround[(d["env"], d.get("round", 0))][d["branch"]] = (rps, p50)
 
-for env in ("arduino-3", "arduino-2"):
-    for b in ("yet-more-safety", "refcounted-impl", "core-changes"):
+for env in envs:
+    for b in order[1:]:
         drps, dlat = [], []
         for (e, r), v in sorted(byround.items()):
             if e == env and "main" in v and b in v:
