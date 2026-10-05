@@ -18,6 +18,10 @@ if (( $# < 3 )); then
   exit 2
 fi
 ENV=$1
+if [[ $ENV == local ]]; then
+  echo "run-matrix.sh: the local env builds the working trees; use collect.py --env local" >&2
+  exit 2
+fi
 ROUNDS=$2
 BRANCHES=("${@:3}")
 WEBSERVER=${BENCH_WEBSERVER:-HEAD}

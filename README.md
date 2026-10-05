@@ -80,10 +80,25 @@ and branch, relative to `main` when `main` was measured.
 ### PlatformIO environments
 
 - `arduino-3` builds the commits `collect.py` selects.  Use this for measurements.
-- `local` builds the AsyncTCP and ESPAsyncWebServer working trees, for interactive
-  work with `pio run -e local -t upload`.  `collect.py` does not rebuild these
-  libraries per ref, so records taken with `--env local` carry a commit that may not
-  match what ran.
+- `local` builds the AsyncTCP and ESPAsyncWebServer working trees, uncommitted
+  changes included, for a quick look before committing.  See below.
+
+### Measuring uncommitted work
+
+```sh
+$python collect.py --env local --branch wip-fix --out results/scratch.jsonl
+$python collect.py --branch main --out results/scratch.jsonl
+python3 summarize.py results/scratch.jsonl
+```
+
+With `--env local`, `--branch` is only a label (default `local`).  The record holds
+each repo's `HEAD` in `sha` and `webserver_sha`, and, when a tree has uncommitted
+changes, a hash of them in `changes` and `webserver_changes`, so two runs of the same
+edits can be matched up.  It builds and measures in one go: refs, `--build-only` and
+`--no-build` are refused, as is `run-matrix.sh local`.
+
+A run like this is not interleaved, so trust only large differences.  Commit what
+looks promising and confirm it with `run-matrix.sh`.
 
 ## What is measured
 
@@ -112,8 +127,8 @@ Advice gathered from running this suite, for people and AI assistants alike:
   rounds before calling a difference.
 - **Check `rssi` and `bssid` in every record.**  A record that joined a different AP is
   not comparable, and a large RSSI shift is worth a rerun.
-- **Commit before measuring.**  `collect.py` builds from git, so uncommitted edits
-  are silently left out.
+- **Commit before measuring.**  Every env but `local` builds from git, so
+  uncommitted edits are silently left out.
 - **Builds are cached** per ref pair and flag set under `.pio/bench/`.  Delete that
   directory to force clean builds.
 - **Flashing** writes `firmware.factory.bin` at 0x0 with esptool directly, retrying

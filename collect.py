@@ -72,11 +72,29 @@ def resolve(repo, ref):
     return sha
 
 
+def changes(repo):
+    """A hash of the working tree's changes from HEAD, untracked files included, or
+    None when it is clean."""
+    if not git(repo, "status", "--porcelain").stdout.strip():
+        return None
+    h = hashlib.sha1(subprocess.run(["git", "-C", repo, "diff", "HEAD", "--binary"],
+                                    capture_output=True).stdout)
+    for f in sorted(git(repo, "ls-files", "-z", "--others", "--exclude-standard").stdout.split("\0")):
+        if f:
+            h.update(f.encode() + b"\0")
+            with open(os.path.join(repo, f), "rb") as fh:
+                h.update(fh.read())
+    sha = h.hexdigest()[:7]
+    log(f"  {os.path.basename(os.path.normpath(repo))} has uncommitted changes ({sha})")
+    return sha
+
+
 def pio_env(env, asynctcp_sha, webserver_sha):
     extra = os.environ.get("BENCH_EXTRA_FLAGS", "")
     # One workspace per build, so a later round rebuilds nothing and pio never has to
     # notice that a library spec changed under an existing libdeps folder.
-    key = f"{env}-{asynctcp_sha[:12]}-{webserver_sha[:12]}"
+    # The local env builds the working trees, whatever their commits, in one workspace.
+    key = env if env == "local" else f"{env}-{asynctcp_sha[:12]}-{webserver_sha[:12]}"
     if extra:
         key += "-" + hashlib.sha1(extra.encode()).hexdigest()[:8]
     return dict(
@@ -398,7 +416,7 @@ def sse_bench(ip, workers, duration):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--env", default="arduino-3", help="platformio env")
-    ap.add_argument("--branch", required=True, help="AsyncTCP ref to test")
+    ap.add_argument("--branch", help="AsyncTCP ref to test; with --env local, a label (default local)")
     ap.add_argument("--webserver", default="HEAD", help="ESPAsyncWebServer ref to test")
     ap.add_argument("--commit", help="AsyncTCP commit to build, recorded under --branch")
     ap.add_argument("--webserver-commit", help="ESPAsyncWebServer commit to build")
@@ -422,15 +440,25 @@ def main():
                     help="round number, for interleaved runs")
     ap.add_argument("--out", help="append the record to this file instead of printing it")
     args = ap.parse_args()
+    local = args.env == "local"
+    if local:
+        # Build and measure together: the working trees may change in between.
+        if args.build_only or args.no_build or args.commit or args.webserver_commit or args.webserver != "HEAD":
+            ap.error("--env local builds the working trees; it takes no refs, --build-only or --no-build")
+        args.branch = args.branch or "local"
+    elif not args.branch:
+        ap.error("--branch is required")
 
     log(f"== {args.branch} on {args.env} ==")
-    sha = webserver_sha = None
+    sha = webserver_sha = asynctcp_changes = webserver_changes = None
     info = {}
     if args.ip and args.skip_upload:
         ip = args.ip
     else:
-        sha = resolve(ASYNCTCP, args.commit or args.branch)
+        sha = resolve(ASYNCTCP, "HEAD" if local else args.commit or args.branch)
         webserver_sha = resolve(WEBSERVER, args.webserver_commit or args.webserver)
+        if local:
+            asynctcp_changes, webserver_changes = changes(ASYNCTCP), changes(WEBSERVER)
         env_vars = pio_env(args.env, sha, webserver_sha)
         if not args.no_build:
             build(args.env, env_vars)
@@ -453,8 +481,10 @@ def main():
         "branch": args.branch,
         "build_flags": os.environ.get("BENCH_EXTRA_FLAGS", ""),
         "sha": sha and sha[:7],
+        "changes": asynctcp_changes,
         "webserver": args.webserver,
         "webserver_sha": webserver_sha and webserver_sha[:7],
+        "webserver_changes": webserver_changes,
         "env": args.env,
         "round": args.round,
         "ip": ip,
