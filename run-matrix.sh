@@ -22,7 +22,8 @@ ROUNDS=$2
 BRANCHES=("${@:3}")
 WEBSERVER=${BENCH_WEBSERVER:-HEAD}
 OUT=${BENCH_OUT:-results/$(date -u +%Y%m%dT%H%M%SZ)-$ENV.jsonl}
-PY=~/.platformio/penv/bin/python
+PY=${PLATFORMIO_CORE_DIR:-$HOME/.platformio}/penv/bin/python
+[[ -x $PY ]] || PY=python3
 cd "$(dirname "$0")"
 mkdir -p "$(dirname "$OUT")"
 # A /dev/serial/by-id path keeps a USB re-enumeration from moving the board

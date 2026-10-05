@@ -24,6 +24,7 @@ import statistics
 import importlib.util
 import os
 import re
+import shutil
 import subprocess
 import threading
 import sys
@@ -33,8 +34,17 @@ from datetime import datetime, timezone
 HERE = os.path.dirname(os.path.abspath(__file__))
 ASYNCTCP = os.environ.get("BENCH_ASYNCTCP_DIR", os.path.join(HERE, "../AsyncTCP"))
 WEBSERVER = os.environ.get("BENCH_WEBSERVER_DIR", os.path.join(HERE, "../ESPAsyncWebServer"))
-PIO = os.path.expanduser("~/.platformio/penv/bin/pio")
-ESPTOOL = os.path.expanduser("~/.platformio/penv/bin/esptool")
+
+
+def pio_tool(name):
+    """The PlatformIO venv's copy of name, else the one on PATH."""
+    core = os.environ.get("PLATFORMIO_CORE_DIR", os.path.expanduser("~/.platformio"))
+    path = os.path.join(core, "penv", "bin", name)
+    return path if os.path.exists(path) else shutil.which(name) or name
+
+
+PIO = pio_tool("pio")
+ESPTOOL = pio_tool("esptool")
 
 _spec = importlib.util.spec_from_file_location("load", os.path.join(HERE, "load.py"))
 load = importlib.util.module_from_spec(_spec)
