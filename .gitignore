@@ -2,4 +2,5 @@ __pycache__/
 bench_credentials.h
 .pio/
 src/idf_component.yml*
-results.jsonl
+*.bak
+*.jsonl
