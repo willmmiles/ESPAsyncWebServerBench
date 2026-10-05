@@ -1,21 +1,25 @@
 #!/bin/bash
-# Measure every AsyncTCP branch once per round, cycling between them.
+# Measure each given AsyncTCP branch once per round, cycling between them.
 #
-# Interleaving matters: this network drifts, and measuring one branch three times
-# in a row lets that drift look like a property of the branch.  One round of all
-# three, repeated, spreads any drift evenly across them.
+# Interleaving matters: networks drift, and measuring one branch three times in
+# a row lets that drift look like a property of the branch.  One round of every
+# branch, repeated, spreads any drift evenly across them.
 #
 # Every ref is resolved and built once, before the first round, so each round
 # measures the same firmware and a broken build fails the run up front.
 #
 # Records go to $BENCH_OUT, by default a new file under results/.
 #
-#   ./run-matrix.sh arduino-3 3        # 3 rounds of all branches
-#   BENCH_BRANCHES="main my-fix" BENCH_WEBSERVER=v3.12.1 ./run-matrix.sh arduino-3 3
+#   ./run-matrix.sh arduino-3 3 main my-fix     # 3 rounds of both branches
+#   BENCH_WEBSERVER=v3.12.1 ./run-matrix.sh arduino-3 3 main my-fix
 set -euo pipefail
-ENV=${1:?usage: run-matrix.sh <pio-env> [rounds]}
-ROUNDS=${2:-3}
-BRANCHES=(${BENCH_BRANCHES:-main core-changes core-changes-us})
+if (( $# < 3 )); then
+  echo "usage: run-matrix.sh <pio-env> <rounds> <branch>..." >&2
+  exit 2
+fi
+ENV=$1
+ROUNDS=$2
+BRANCHES=("${@:3}")
 WEBSERVER=${BENCH_WEBSERVER:-HEAD}
 OUT=${BENCH_OUT:-results/$(date -u +%Y%m%dT%H%M%SZ)-$ENV.jsonl}
 PY=~/.platformio/penv/bin/python
