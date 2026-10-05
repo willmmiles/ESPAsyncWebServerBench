@@ -2,8 +2,10 @@
 """Add a counter of tcpip_api_call() invocations, so the two branches can be
 compared on how often they cross to the LwIP thread.  Applies to whichever branch
 is checked out; `git checkout src/` reverts it."""
-import re, sys
-p = "/home/wmiles/Projects/AsyncTCP/src/AsyncTCP.cpp"
+import os, re, sys
+HERE = os.path.dirname(os.path.abspath(__file__))
+ASYNCTCP = os.environ.get("BENCH_ASYNCTCP_DIR", os.path.join(HERE, "../AsyncTCP"))
+p = os.path.join(ASYNCTCP, "src/AsyncTCP.cpp")
 s = open(p).read()
 if "_asynctcp_api_calls" in s:
     print("already instrumented"); sys.exit(0)
