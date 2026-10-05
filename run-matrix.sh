@@ -21,8 +21,9 @@ OUT=${BENCH_OUT:-results/$(date -u +%Y%m%dT%H%M%SZ)-$ENV.jsonl}
 PY=~/.platformio/penv/bin/python
 cd "$(dirname "$0")"
 mkdir -p "$(dirname "$OUT")"
-# by-id, so a USB re-enumeration does not move the board out from under a long run
-BENCH_PORT="${BENCH_PORT:-/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0}"
+# A /dev/serial/by-id path keeps a USB re-enumeration from moving the board
+# out from under a long run.
+BENCH_PORT="${BENCH_PORT:-/dev/ttyUSB0}"
 
 commit() { git -C "$1" rev-parse --verify "$2^{commit}"; }
 WEBSERVER_SHA=$(commit "${BENCH_WEBSERVER_DIR:-../ESPAsyncWebServer}" "$WEBSERVER")
