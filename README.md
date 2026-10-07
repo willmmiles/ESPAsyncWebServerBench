@@ -80,6 +80,9 @@ and branch, relative to `main` when `main` was measured.
 ### PlatformIO environments
 
 - `arduino-3` builds the commits `collect.py` selects.  Use this for measurements.
+- `arduino-2` does the same on Arduino 2 (espressif32 6.x).  Its packages share
+  slots with `arduino-3`'s, so build one framework at a time and compare branches
+  only within a framework.  `merge_factory.py` writes its `firmware.factory.bin`.
 - `local` builds the AsyncTCP and ESPAsyncWebServer working trees, uncommitted
   changes included, for a quick look before committing.  See below.
 
